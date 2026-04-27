@@ -93,6 +93,19 @@ export class TvPurchase {
   @Prop({ type: String })
   refundReason: string;
 
+  // ── Renewal-reminder tracking ─────────────────────────────
+  /** When this subscription is expected to expire. Calculated as createdAt + (quantity || 1) * 30 days on successful purchase. Null for failed/refunded purchases. */
+  @Prop({ type: Date, default: null, index: true })
+  expiresAt: Date | null;
+
+  /** Set when the 3-day-out renewal reminder has been dispatched. Prevents duplicate reminders on subsequent cron runs. */
+  @Prop({ type: Date, default: null })
+  reminderSentAt: Date | null;
+
+  /** Set true when a newer successful purchase covers the same target (smartcard or phone). The cron skips superseded purchases so users don't get reminded after they've already renewed. */
+  @Prop({ type: Boolean, default: false, index: true })
+  reminderSuperseded: boolean;
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -104,3 +117,11 @@ TvPurchaseSchema.index({ userId: 1, createdAt: -1 });
 TvPurchaseSchema.index({ status: 1 });
 TvPurchaseSchema.index({ provider: 1 });
 TvPurchaseSchema.index({ createdAt: -1 });
+
+// Compound index for the reminder cron: indexed scan over a tiny 24-hour expiry window.
+TvPurchaseSchema.index({
+  status: 1,
+  expiresAt: 1,
+  reminderSentAt: 1,
+  reminderSuperseded: 1,
+});

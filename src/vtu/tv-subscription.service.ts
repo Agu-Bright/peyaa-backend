@@ -225,10 +225,43 @@ export class TvService {
       purchaseDoc.status = TvPurchaseStatus.SUCCESS;
       purchaseDoc.providerReference = result.transactionId || requestId;
       purchaseDoc.providerResponse = result.raw;
+      // Calculate expiry for the renewal-reminder cron. VTPass doesn't return
+      // a precise expiry date, so we approximate as N * 30 days from now.
+      const months = Math.max(1, dto.quantity || 1);
+      purchaseDoc.expiresAt = new Date(Date.now() + months * 30 * 86_400_000);
       await purchaseDoc.save({ session });
 
       await session.commitTransaction();
       this.logger.log(`TV purchase successful: ${reference}`);
+
+      // 5. Suppress pending reminders for older purchases on the same target
+      // (smartcard for DStv/GOtv/StarTimes; phone for Showmax). Done outside
+      // the transaction — best-effort, failure shouldn't roll back the purchase.
+      try {
+        const targetFilter: any = identifier
+          ? { smartcardNumber: identifier }
+          : { phoneNumber: phone };
+        const suppressResult = await this.tvModel.updateMany(
+          {
+            _id: { $ne: purchaseDoc._id },
+            userId: purchaseDoc.userId,
+            provider: purchaseDoc.provider,
+            ...targetFilter,
+            status: TvPurchaseStatus.SUCCESS,
+            reminderSentAt: null,
+            reminderSuperseded: false,
+          },
+          { $set: { reminderSuperseded: true } },
+        );
+        if (suppressResult.modifiedCount > 0) {
+          this.logger.log(
+            `Suppressed ${suppressResult.modifiedCount} older reminder(s) for ${purchaseDoc.provider}/${identifier || phone}`,
+          );
+        }
+      } catch (suppressErr: any) {
+        this.logger.warn(`Reminder suppression failed for ${reference}: ${suppressErr.message}`);
+      }
+
       return purchaseDoc;
     } catch (error: any) {
       // VTPass failed — ABORT transaction (wallet debit is automatically rolled back)

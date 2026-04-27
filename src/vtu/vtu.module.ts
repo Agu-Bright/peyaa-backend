@@ -25,11 +25,13 @@ import {
   TvPurchase,
   TvPurchaseSchema,
 } from "./schemas/tv-subscription.schema";
+import { User, UserSchema } from "../users/schemas/user.schema";
 
 import { ElectricityController, AdminElectricityController } from './electricity.controller';
 import { ElectricityService } from './electricity.service';
 import { TvController, AdminTvController } from './tv-subscription.controller';
 import { TvService } from './tv-subscription.service';
+import { TvReminderService } from './tv-reminder.service';
 
 @Module({
   imports: [
@@ -38,6 +40,8 @@ import { TvService } from './tv-subscription.service';
       { name: DataPurchase.name, schema: DataPurchaseSchema },
       { name: ElectricityPurchase.name, schema: ElectricityPurchaseSchema },
       { name: TvPurchase.name, schema: TvPurchaseSchema },
+      // User model needed by TvReminderService to look up email/fullName
+      { name: User.name, schema: UserSchema },
     ]),
     HttpModule,
     forwardRef(() => WalletModule),
@@ -50,7 +54,13 @@ import { TvService } from './tv-subscription.service';
     TvController,
     AdminTvController,
   ],
-  providers: [VtpassService, SquadCoService, ElectricityService, TvService],
+  providers: [
+    VtpassService,
+    SquadCoService,
+    ElectricityService,
+    TvService,
+    TvReminderService,
+  ],
   exports: [VtpassService, SquadCoService, ElectricityService, TvService],
 })
 export class VtuModule {}
