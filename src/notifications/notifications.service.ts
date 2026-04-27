@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -10,6 +10,15 @@ import {
   UserNotificationDocument,
   NotificationType,
 } from './schemas/user-notification.schema';
+import {
+  NotificationLog,
+  NotificationLogDocument,
+  NotificationChannel,
+  BroadcastRecipientGroup,
+  BroadcastStatus,
+} from './schemas/notification-log.schema';
+import { User, UserDocument, UserStatus } from '../users/schemas/user.schema';
+import { EmailService } from '../email/email.service';
 import {
   paginate,
   calculateSkip,
@@ -27,6 +36,11 @@ export class NotificationsService implements OnModuleInit {
     private tokenModel: Model<NotificationTokenDocument>,
     @InjectModel(UserNotification.name)
     private notificationModel: Model<UserNotificationDocument>,
+    @InjectModel(NotificationLog.name)
+    private logModel: Model<NotificationLogDocument>,
+    @InjectModel(User.name)
+    private userModel: Model<UserDocument>,
+    private readonly emailService: EmailService,
   ) {}
 
   async onModuleInit() {
@@ -291,4 +305,180 @@ export class NotificationsService implements OnModuleInit {
       { $set: { isRead: true } },
     );
   }
+
+  // ============================================
+  // ADMIN: BROADCAST + HISTORY
+  // ============================================
+
+  /**
+   * Resolve target user IDs (and emails) for a broadcast.
+   */
+  private async resolveBroadcastTargets(
+    recipients: BroadcastRecipientGroup,
+    targetUserId: string | undefined,
+    needEmails: boolean,
+  ): Promise<{ ids: string[]; emails: string[] }> {
+    if (recipients === BroadcastRecipientGroup.INDIVIDUAL) {
+      if (!targetUserId) {
+        throw new NotFoundException('targetUserId is required for individual broadcasts');
+      }
+      const user = await this.userModel
+        .findById(targetUserId)
+        .select(needEmails ? '_id email' : '_id')
+        .lean();
+      if (!user) {
+        throw new NotFoundException('Target user not found');
+      }
+      return {
+        ids: [(user._id as Types.ObjectId).toString()],
+        emails: needEmails && user.email ? [user.email] : [],
+      };
+    }
+
+    const filter: any = { isDeleted: { $ne: true } };
+    if (recipients === BroadcastRecipientGroup.ACTIVE) {
+      filter.status = UserStatus.ACTIVE;
+    }
+
+    const users = await this.userModel
+      .find(filter)
+      .select(needEmails ? '_id email' : '_id')
+      .lean();
+
+    return {
+      ids: users.map((u) => (u._id as Types.ObjectId).toString()),
+      emails: needEmails
+        ? users
+            .map((u) => u.email)
+            .filter((e): e is string => typeof e === 'string' && e.length > 0)
+        : [],
+    };
+  }
+
+  /**
+   * Send a broadcast (push or email) to all/active/individual users
+   * and persist a log entry the admin can review.
+   */
+  async sendBroadcast(
+    dto: {
+      type: NotificationChannel;
+      recipients: BroadcastRecipientGroup;
+      subject: string;
+      body: string;
+      targetUserId?: string;
+    },
+    sentBy: string,
+  ): Promise<{ sentCount: number; logId: string }> {
+    const needEmails = dto.type === NotificationChannel.EMAIL;
+    const { ids, emails } = await this.resolveBroadcastTargets(
+      dto.recipients,
+      dto.targetUserId,
+      needEmails,
+    );
+
+    let sentCount = 0;
+    let status: BroadcastStatus = BroadcastStatus.SENT;
+    let errorMessage: string | null = null;
+
+    try {
+      if (dto.type === NotificationChannel.PUSH) {
+        if (ids.length > 0) {
+          await this.sendToMultiple(
+            ids,
+            dto.subject,
+            dto.body,
+            { source: 'admin_broadcast' },
+            NotificationType.SYSTEM,
+            'admin_broadcast',
+          );
+          sentCount = ids.length;
+        }
+      } else if (dto.type === NotificationChannel.EMAIL) {
+        const html = `<p>${escapeHtml(dto.body).replace(/\n/g, '<br/>')}</p>`;
+        const results = await Promise.all(
+          emails.map((to) =>
+            this.emailService.send({
+              to,
+              subject: dto.subject,
+              html,
+              text: dto.body,
+            }).catch((err) => {
+              this.logger.warn(`Email failed for ${to}: ${err?.message ?? err}`);
+              return false;
+            }),
+          ),
+        );
+        sentCount = results.filter(Boolean).length;
+        if (sentCount === 0 && emails.length > 0) {
+          status = BroadcastStatus.FAILED;
+          errorMessage = 'All emails failed to send';
+        } else if (sentCount < emails.length) {
+          status = BroadcastStatus.PARTIAL;
+        }
+      }
+    } catch (err: any) {
+      this.logger.error(`Broadcast failed: ${err?.message ?? err}`);
+      status = BroadcastStatus.FAILED;
+      errorMessage = err?.message ?? 'Unknown error';
+    }
+
+    const log = await this.logModel.create({
+      subject: dto.subject,
+      body: dto.body,
+      type: dto.type,
+      recipients: dto.recipients,
+      targetUserId: dto.targetUserId ? new Types.ObjectId(dto.targetUserId) : null,
+      sentCount,
+      status,
+      sentBy: new Types.ObjectId(sentBy),
+      errorMessage,
+    });
+
+    this.logger.log(
+      `Broadcast ${log._id}: type=${dto.type} recipients=${dto.recipients} sent=${sentCount} status=${status}`,
+    );
+
+    return {
+      sentCount,
+      logId: (log._id as Types.ObjectId).toString(),
+    };
+  }
+
+  /**
+   * Admin: paginated list of past broadcasts.
+   */
+  async getNotificationHistory(query: {
+    page?: number;
+    limit?: number;
+    type?: NotificationChannel;
+    status?: BroadcastStatus;
+  }): Promise<PaginatedResult<NotificationLog>> {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const filter: any = {};
+    if (query.type) filter.type = query.type;
+    if (query.status) filter.status = query.status;
+
+    const total = await this.logModel.countDocuments(filter);
+    const data = await this.logModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .skip(calculateSkip(page, limit))
+      .limit(limit)
+      .populate('targetUserId', 'fullName email')
+      .populate('sentBy', 'fullName email')
+      .lean();
+
+    return paginate(data as any, total, page, limit);
+  }
+}
+
+/** Minimal HTML escaper for email body. */
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
