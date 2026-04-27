@@ -73,16 +73,32 @@ export class VtpassService {
     const apiKey = this.configService.get<string>('VTPASS_API_KEY', '');
     const publicKey = this.configService.get<string>('VTPASS_PUBLIC_KEY', '');
     const secretKey = this.configService.get<string>('VTPASS_SECRET_KEY', '');
+    const username = this.configService.get<string>('VTPASS_USERNAME', '');
+    const password = this.configService.get<string>('VTPASS_PASSWORD', '');
 
     this.client = axios.create({
       baseURL,
       timeout: 60000,
-      headers: {
-        'api-key': apiKey,
-        'public-key': publicKey,
-        'secret-key': secretKey,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    // Request interceptor: VTPass supports both Basic Auth (sandbox) and api-key/secret-key headers (live).
+    // - Sandbox endpoint requires Basic Auth (username + password)
+    // - Live endpoint uses api-key + (public-key for GET / secret-key for POST)
+    // We send all available credentials so either auth scheme works.
+    this.client.interceptors.request.use((config) => {
+      config.headers = config.headers ?? {} as any;
+      if (apiKey) config.headers['api-key'] = apiKey;
+      if (config.method?.toLowerCase() === 'get') {
+        if (publicKey) config.headers['public-key'] = publicKey;
+      } else {
+        if (secretKey) config.headers['secret-key'] = secretKey;
+      }
+      if (username && password) {
+        const basic = Buffer.from(`${username}:${password}`).toString('base64');
+        config.headers['Authorization'] = `Basic ${basic}`;
+      }
+      return config;
     });
 
     this.client.interceptors.response.use(

@@ -1,12 +1,20 @@
 /**
  * Peyaa Backend - Main Entry Point
- * 
+ *
  * Configures the NestJS application with:
  * - CORS
  * - Validation pipes
  * - Swagger documentation at /docs
  * - Global exception filters
  */
+
+// Polyfill global crypto for Node.js < 19 (required by @nestjs/schedule).
+// This must run BEFORE any NestJS imports execute.
+import { webcrypto } from 'crypto';
+if (!(globalThis as any).crypto) {
+  (globalThis as any).crypto = webcrypto;
+}
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
