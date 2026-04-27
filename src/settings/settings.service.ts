@@ -39,14 +39,6 @@ const DEFAULT_SETTINGS: DefaultSetting[] = [
     valueType: 'boolean',
   },
   {
-    key: 'feature_apple_signin',
-    value: false,
-    category: SettingCategory.FEATURES,
-    isPublic: true,
-    description: 'Enable Apple sign-in on mobile',
-    valueType: 'boolean',
-  },
-{
     key: 'feature_gift_cards',
     value: true,
     category: SettingCategory.FEATURES,
@@ -138,7 +130,26 @@ export class SettingsService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
+    await this.removeDeprecatedSettings();
     await this.seedDefaults();
+  }
+
+  /**
+   * Remove settings that have been retired from DEFAULT_SETTINGS but may
+   * still exist in production MongoDB from earlier deployments. Idempotent —
+   * safe to run on every boot.
+   */
+  private async removeDeprecatedSettings() {
+    const deprecatedKeys = ['feature_apple_signin'];
+    if (deprecatedKeys.length === 0) return;
+    const result = await this.settingModel.deleteMany({
+      key: { $in: deprecatedKeys },
+    });
+    if (result.deletedCount > 0) {
+      this.logger.log(
+        `Removed ${result.deletedCount} deprecated setting(s): ${deprecatedKeys.join(', ')}`,
+      );
+    }
   }
 
   private async seedDefaults() {
