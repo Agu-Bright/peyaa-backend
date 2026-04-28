@@ -41,6 +41,7 @@ export class EmailService {
 
     const host = this.configService.get<string>('SMTP_HOST');
     const user = this.configService.get<string>('SMTP_USER');
+    const pass = this.configService.get<string>('SMTP_PASS') ?? '';
 
     // Create SMTP transporter
     this.transporter = nodemailer.createTransport({
@@ -49,15 +50,21 @@ export class EmailService {
       secure,
       auth: {
         user,
-        pass: this.configService.get<string>('SMTP_PASS'),
+        pass,
       },
       // Helpful diagnostics for connection issues with picky providers
       // (PrivateEmail / Namecheap / Zoho often drop weak ciphers).
       tls: { minVersion: 'TLSv1.2' },
     });
 
+    // Diagnostic only — never log the password value, only its length and
+    // first/last char so the user can verify the deploy platform didn't
+    // truncate at "#" or transform "$" without exposing the secret.
+    const passDiag = pass
+      ? `len=${pass.length} first=${pass[0]} last=${pass[pass.length - 1]}`
+      : 'EMPTY';
     this.logger.log(
-      `SMTP transporter configured: host=${host} port=${port} secure=${secure} user=${user}`,
+      `SMTP transporter configured: host=${host} port=${port} secure=${secure} user=${user} pass=[${passDiag}]`,
     );
 
     // Verify connection on startup
