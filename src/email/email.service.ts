@@ -26,16 +26,39 @@ export class EmailService {
       'Peyaa <contact@peyaa.com>',
     );
 
+    // Coerce port to a real number — env vars are always strings, and
+    // nodemailer's secure-vs-port logic depends on the actual numeric value.
+    const portRaw = this.configService.get<string>('SMTP_PORT', '587');
+    const port = Number.parseInt(String(portRaw), 10) || 587;
+
+    // Respect explicit SMTP_SECURE if set (e.g. "true"/"false"/"1"/"0").
+    // Otherwise infer: port 465 = implicit TLS (SMTPS), everything else = STARTTLS.
+    const secureRaw = this.configService.get<string>('SMTP_SECURE');
+    const secure =
+      secureRaw != null && secureRaw !== ''
+        ? secureRaw === 'true' || secureRaw === '1'
+        : port === 465;
+
+    const host = this.configService.get<string>('SMTP_HOST');
+    const user = this.configService.get<string>('SMTP_USER');
+
     // Create SMTP transporter
     this.transporter = nodemailer.createTransport({
-      host: this.configService.get<string>('SMTP_HOST'),
-      port: this.configService.get<number>('SMTP_PORT', 587),
-      secure: this.configService.get<number>('SMTP_PORT', 587) === 465,
+      host,
+      port,
+      secure,
       auth: {
-        user: this.configService.get<string>('SMTP_USER'),
+        user,
         pass: this.configService.get<string>('SMTP_PASS'),
       },
+      // Helpful diagnostics for connection issues with picky providers
+      // (PrivateEmail / Namecheap / Zoho often drop weak ciphers).
+      tls: { minVersion: 'TLSv1.2' },
     });
+
+    this.logger.log(
+      `SMTP transporter configured: host=${host} port=${port} secure=${secure} user=${user}`,
+    );
 
     // Verify connection on startup
     this.verifyConnection();
