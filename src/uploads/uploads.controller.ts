@@ -119,4 +119,30 @@ export class UploadsController {
 
     return this.uploadsService.uploadBrandLogo(file);
   }
+
+  /**
+   * Upload a KYC document (selfie or government ID).
+   */
+  @Post('kyc')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiOperation({ summary: 'Upload KYC photo (selfie or government ID)' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', format: 'binary' },
+      },
+      required: ['file'],
+    },
+  })
+  @ApiResponse({ status: 201, description: 'KYC photo uploaded successfully' })
+  async uploadKycPhoto(
+    @UploadedFile() file: Express.Multer.File,
+  ): Promise<UploadResult> {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+    return this.uploadsService.uploadKycPhoto(file);
+  }
 }

@@ -20,6 +20,35 @@ export enum UserStatus {
   DEACTIVATED = 'DEACTIVATED',
 }
 
+/**
+ * KYC tier — controls how high a user's wallet balance can go.
+ *  - TIER_1 (default): cap at DEFAULT_TIER_1_LIMIT_KOBO (₦500K)
+ *  - TIER_2: cap at admin-configurable limit (default ₦5M, see settings.service)
+ */
+export enum KycTier {
+  TIER_1 = 'TIER_1',
+  TIER_2 = 'TIER_2',
+}
+
+/**
+ * KYC status for a user. NONE means they've never submitted.
+ *  - NONE: never submitted
+ *  - PENDING: submitted, awaiting admin review
+ *  - APPROVED: admin approved → user is now Tier 2
+ *  - REJECTED: admin rejected → user can resubmit
+ */
+export enum KycStatus {
+  NONE = 'NONE',
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+}
+
+/** Default Tier 1 wallet limit in kobo: ₦500,000.00 = 50,000,000 kobo. */
+export const DEFAULT_TIER_1_LIMIT_KOBO = 50_000_000;
+/** Default Tier 2 wallet limit in kobo (overridable in app settings): ₦5,000,000. */
+export const DEFAULT_TIER_2_LIMIT_KOBO = 500_000_000;
+
 @Schema({
   timestamps: true,
   collection: 'users',
@@ -130,6 +159,47 @@ export class User {
    */
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   referredBy?: Types.ObjectId;
+
+  // ─── KYC + wallet limit ────────────────────────────────
+  /**
+   * The user's current KYC tier. Drives the wallet balance cap.
+   * New users default to TIER_1 (₦500,000).
+   */
+  @Prop({
+    type: String,
+    enum: Object.values(KycTier),
+    default: KycTier.TIER_1,
+    index: true,
+  })
+  kycTier: KycTier;
+
+  /**
+   * Wallet balance cap (in kobo). Top-ups that would push balance over
+   * this value are rejected. Computed from `kycTier` at signup but can
+   * be overridden per-user by an admin.
+   */
+  @Prop({
+    type: Number,
+    default: DEFAULT_TIER_1_LIMIT_KOBO,
+  })
+  walletLimit: number;
+
+  /**
+   * Status of the user's most-recent KYC submission. NONE if never submitted.
+   */
+  @Prop({
+    type: String,
+    enum: Object.values(KycStatus),
+    default: KycStatus.NONE,
+    index: true,
+  })
+  kycStatus: KycStatus;
+
+  /**
+   * Reference to the most-recent KycSubmission document for quick lookup.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'KycSubmission', default: null })
+  latestKycSubmissionId: Types.ObjectId | null;
 
   /**
    * Timestamps (auto-managed)

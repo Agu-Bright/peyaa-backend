@@ -124,6 +124,14 @@ export class UploadsService {
   }
 
   /**
+   * Upload a KYC document (selfie or government ID) to Cloudflare R2.
+   * Higher size cap (15 MB) to allow good-quality phone photos.
+   */
+  async uploadKycPhoto(file: Express.Multer.File): Promise<UploadResult> {
+    return this.uploadToR2(file, 'kyc', 15);
+  }
+
+  /**
    * Delete a file from Cloudinary
    */
   async deleteFile(publicId: string): Promise<boolean> {

@@ -28,6 +28,7 @@ import { SupportModule } from './support/support.module';
 import { ReferralModule } from './referral/referral.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PromosModule } from './promos/promos.module';
+import { KycModule } from './kyc/kyc.module';
 
 // App Controller
 import { AppController } from './app.controller';
@@ -97,6 +98,7 @@ import { AppController } from './app.controller';
     ReferralModule,
     NotificationsModule,
     PromosModule,
+    KycModule,
 
     // Supporting modules
     EmailModule,

@@ -19,6 +19,7 @@ import { WithdrawalService } from './withdrawal.service';
 import { WithdrawalController } from './withdrawal.controller';
 import { Withdrawal, WithdrawalSchema } from './schemas/withdrawal.schema';
 import { ReferralModule } from '../referral/referral.module';
+import { User, UserSchema } from '../users/schemas/user.schema';
 
 
 @Module({
@@ -28,6 +29,8 @@ import { ReferralModule } from '../referral/referral.module';
       { name: WalletTransaction.name, schema: WalletTransactionSchema },
       { name: BankAccount.name, schema: BankAccountSchema },
       { name: Withdrawal.name, schema: WithdrawalSchema },
+      // User schema for wallet-limit lookups in creditWallet
+      { name: User.name, schema: UserSchema },
     ]),
     forwardRef(() => PaystackModule),
     forwardRef(() => ReferralModule),

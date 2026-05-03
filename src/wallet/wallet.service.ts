@@ -27,6 +27,7 @@ import {
   TransactionSource,
   TransactionStatus,
 } from "./schemas/wallet-transaction.schema";
+import { User, UserDocument } from "../users/schemas/user.schema";
 import { PaystackService } from "../paystack/paystack.service";
 import { ReferralService } from "../referral/referral.service";
 import { NotificationsService } from "../notifications/notifications.service";
@@ -79,6 +80,8 @@ export class WalletService {
     private readonly walletModel: Model<WalletDocument>,
     @InjectModel(WalletTransaction.name)
     private readonly transactionModel: Model<WalletTransactionDocument>,
+    @InjectModel(User.name)
+    private readonly userModel: Model<UserDocument>,
     @InjectConnection() private readonly connection: Connection,
     private readonly paystackService: PaystackService,
     @Inject(forwardRef(() => ReferralService)) private readonly referralService: ReferralService,
@@ -162,6 +165,31 @@ export class WalletService {
 
       const balanceBefore = wallet.balance;
       const balanceAfter = balanceBefore + params.amount;
+
+      // ─── Wallet-limit enforcement ───────────────────────
+      // Block top-ups (Paystack) that would exceed the user's KYC tier limit.
+      // Other credit sources (refunds, gift card payouts, manual admin credits)
+      // are allowed even if they push balance over the cap — those are earned
+      // funds the user is entitled to.
+      if (params.source === TransactionSource.PAYSTACK_TOPUP) {
+        const userDoc = await this.userModel
+          .findById(params.userId)
+          .select("walletLimit kycTier")
+          .session(session)
+          .lean();
+        if (userDoc && balanceAfter > userDoc.walletLimit) {
+          const limitNaira = (userDoc.walletLimit / 100).toLocaleString("en-NG");
+          const balanceNaira = (balanceBefore / 100).toLocaleString("en-NG");
+          const tierLabel = userDoc.kycTier === "TIER_1" ? "Tier 1" : "Tier 2";
+          throw new BadRequestException(
+            `This top-up would exceed your ${tierLabel} wallet limit of ₦${limitNaira}. ` +
+              `Your current balance is ₦${balanceNaira}. ` +
+              (userDoc.kycTier === "TIER_1"
+                ? "Upgrade your account in Profile → KYC to raise your limit."
+                : "Withdraw some funds first or contact support."),
+          );
+        }
+      }
 
       // Update wallet balance atomically
       const updatedWallet = await this.walletModel.findByIdAndUpdate(
